@@ -65,8 +65,13 @@ typedef struct {
 #define NGX_HASH_SMALL            1
 #define NGX_HASH_LARGE            2
 
-#define NGX_HASH_LARGE_ASIZE      16384
-#define NGX_HASH_LARGE_HSIZE      10007
+#define NGX_HASH_SMALL_ASIZE      128
+#define NGX_HASH_SMALL_HSIZE      127
+#define NGX_HASH_SMALL_HPOW       7
+
+#define NGX_HASH_LARGE_ASIZE      131072
+#define NGX_HASH_LARGE_HSIZE      131071
+#define NGX_HASH_LARGE_HPOW       17
 
 #define NGX_HASH_WILDCARD_KEY     1
 #define NGX_HASH_READONLY_KEY     2
@@ -74,6 +79,7 @@ typedef struct {
 
 typedef struct {
     ngx_uint_t        hsize;
+    ngx_uint_t        hpow;
 
     ngx_pool_t       *pool;
     ngx_pool_t       *temp_pool;
@@ -109,6 +115,7 @@ ngx_int_t ngx_hash_wildcard_init(ngx_hash_init_t *hinit, ngx_hash_key_t *names,
     ngx_uint_t nelts);
 
 #define ngx_hash(key, c)   ((ngx_uint_t) key * 31 + c)
+
 ngx_uint_t ngx_hash_key(u_char *data, size_t len);
 ngx_uint_t ngx_hash_key_lc(u_char *data, size_t len);
 ngx_uint_t ngx_hash_strlow(u_char *dst, u_char *src, size_t n);

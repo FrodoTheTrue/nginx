@@ -7,6 +7,7 @@
 
 #include <ngx_config.h>
 #include <ngx_core.h>
+#include <time.h>
 
 
 void *
@@ -254,8 +255,9 @@ ngx_hash_init(ngx_hash_init_t *hinit, ngx_hash_key_t *names, ngx_uint_t nelts)
     u_char          *elts;
     size_t           len;
     u_short         *test;
-    ngx_uint_t       i, n, key, size, start, bucket_size;
+    ngx_uint_t       i, n, key = 0, size, size_pow, bucket_size;
     ngx_hash_elt_t  *elt, **buckets;
+
 
     if (hinit->max_size == 0) {
         ngx_log_error(NGX_LOG_EMERG, hinit->pool->log, 0,
@@ -278,58 +280,24 @@ ngx_hash_init(ngx_hash_init_t *hinit, ngx_hash_key_t *names, ngx_uint_t nelts)
 
     test = ngx_alloc(hinit->max_size * sizeof(u_short), hinit->pool->log);
     if (test == NULL) {
-        return NGX_ERROR;
+         return NGX_ERROR;
     }
 
     bucket_size = hinit->bucket_size - sizeof(void *);
 
-    start = nelts / (bucket_size / (2 * sizeof(void *)));
-    start = start ? start : 1;
+    size = 1;
+    size_pow = 0;
 
-    if (hinit->max_size > 10000 && nelts && hinit->max_size / nelts < 100) {
-        start = hinit->max_size - 1000;
+    if (ngx_strcmp(hinit->name, "server_names_hash") == 0) {
+        printf("%lu\n", nelts);
     }
 
-    for (size = start; size <= hinit->max_size; size++) {
-
-        ngx_memzero(test, size * sizeof(u_short));
-
-        for (n = 0; n < nelts; n++) {
-            if (names[n].key.data == NULL) {
-                continue;
-            }
-
-            key = names[n].key_hash % size;
-            test[key] = (u_short) (test[key] + NGX_HASH_ELT_SIZE(&names[n]));
-
-#if 0
-            ngx_log_error(NGX_LOG_ALERT, hinit->pool->log, 0,
-                          "%ui: %ui %ui \"%V\"",
-                          size, key, test[key], &names[n].key);
-#endif
-
-            if (test[key] > (u_short) bucket_size) {
-                goto next;
-            }
-        }
-
-        goto found;
-
-    next:
-
-        continue;
+    while (size <= nelts) {
+        size *= 2;
+        size_pow += 1;
     }
 
-    size = hinit->max_size;
-
-    ngx_log_error(NGX_LOG_WARN, hinit->pool->log, 0,
-                  "could not build optimal %s, you should increase "
-                  "either %s_max_size: %i or %s_bucket_size: %i; "
-                  "ignoring %s_bucket_size",
-                  hinit->name, hinit->name, hinit->max_size,
-                  hinit->name, hinit->bucket_size, hinit->name);
-
-found:
+    size -= 1;
 
     for (i = 0; i < size; i++) {
         test[i] = sizeof(void *);
@@ -340,7 +308,8 @@ found:
             continue;
         }
 
-        key = names[n].key_hash % size;
+        key = (2147483647 * names[n].key_hash & (1ull << 61) - 1) >> (61 - size_pow);
+
         test[key] = (u_short) (test[key] + NGX_HASH_ELT_SIZE(&names[n]));
     }
 
@@ -401,7 +370,8 @@ found:
             continue;
         }
 
-        key = names[n].key_hash % size;
+        key = (2147483647 * names[n].key_hash & (1ull << 61) - 1) >> (61 - size_pow);
+
         elt = (ngx_hash_elt_t *) ((u_char *) buckets[key] + test[key]);
 
         elt->value = names[n].value;
@@ -660,12 +630,14 @@ ngx_hash_keys_array_init(ngx_hash_keys_arrays_t *ha, ngx_uint_t type)
     ngx_uint_t  asize;
 
     if (type == NGX_HASH_SMALL) {
-        asize = 4;
-        ha->hsize = 107;
+        asize = NGX_HASH_SMALL_ASIZE;
+        ha->hsize = NGX_HASH_SMALL_HSIZE;
+        ha->hpow = NGX_HASH_SMALL_HPOW;
 
     } else {
         asize = NGX_HASH_LARGE_ASIZE;
         ha->hsize = NGX_HASH_LARGE_HSIZE;
+        ha->hpow = NGX_HASH_LARGE_HPOW;
     }
 
     if (ngx_array_init(&ha->keys, ha->temp_pool, asize, sizeof(ngx_hash_key_t))
@@ -708,7 +680,6 @@ ngx_hash_keys_array_init(ngx_hash_keys_arrays_t *ha, ngx_uint_t type)
     return NGX_OK;
 }
 
-
 ngx_int_t
 ngx_hash_add_key(ngx_hash_keys_arrays_t *ha, ngx_str_t *key, void *value,
     ngx_uint_t flags)
@@ -716,7 +687,7 @@ ngx_hash_add_key(ngx_hash_keys_arrays_t *ha, ngx_str_t *key, void *value,
     size_t           len;
     u_char          *p;
     ngx_str_t       *name;
-    ngx_uint_t       i, k, n, skip, last;
+    ngx_uint_t      u, v, i, k, n, skip, last;
     ngx_array_t     *keys, *hwc;
     ngx_hash_key_t  *hk;
 
@@ -781,9 +752,10 @@ ngx_hash_add_key(ngx_hash_keys_arrays_t *ha, ngx_str_t *key, void *value,
             key->data[i] = ngx_tolower(key->data[i]);
         }
         k = ngx_hash(k, key->data[i]);
+        u = (k & ha->hsize) + (k >> ha->hpow);
+        v = (u & ha->hsize) + (u >> ha->hpow);
+        k = v == ha->hsize ? 0 : v;
     }
-
-    k %= ha->hsize;
 
     /* check conflicts in exact hash */
 
